@@ -76,10 +76,11 @@ def data_generator(dataset, framework="torch"):
                 data[i] = torch.Tensor(data[i].astype(float64))
 
     elif framework == "tf":
-        import tensorflow as tf
-        for data in [X_train, X_valid, X_test]:
-            for i in range(len(data)):
-                data[i] = tf.convert_to_tensor(value=data[i], dtype=tf.float32)
+        # import tensorflow as tf
+        # for data in [X_train, X_valid, X_test]:
+        #     for i in range(len(data)):
+        #         data[i] = tf.convert_to_tensor(value=data[i], dtype=tf.float32)
+        pass
 
     else:
         raise Exception()

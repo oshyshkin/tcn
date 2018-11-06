@@ -119,6 +119,7 @@ class TemporalConvNet(tf.layers.Layer):
             name=name,
             **kwargs
         )
+
         self.layers = []
         num_levels = len(num_channels)
         for i in range(num_levels):
@@ -133,4 +134,5 @@ class TemporalConvNet(tf.layers.Layer):
         outputs = inputs
         for layer in self.layers:
             outputs = layer(outputs, training=training)
+
         return outputs
