@@ -1,12 +1,14 @@
-import argparse
+import sys
+sys.path.append('/Users/admin/Documents/Diploma/tcn/')
 
+import argparse
 import torch
 import torch.nn as nn
 from torch.autograd import Variable
 import torch.optim as optim
 import numpy as np
 
-from model import TCN
+from torch_version.model import TCN
 from utils import data_generator, get_logger
 
 
@@ -34,7 +36,7 @@ parser.add_argument('--optim', type=str, default='Adam',
 parser.add_argument('--nhid', type=int, default=150,
                     help='number of hidden units per layer (default: 150)')
 parser.add_argument('--data', type=str, default='Piano',
-                    help='the dataset to run (default: Nott)')
+                    help='the dataset to run (default: Piano)')
 parser.add_argument('--seed', type=int, default=1111,
                     help='random seed (default: 1111)')
 
@@ -59,7 +61,7 @@ model = TCN(input_size=input_size,
             output_size=input_size,
             num_channels=n_channels,
             kernel_size=kernel_size,
-            dropout=args.dropout)
+            dropout=dropout)
 
 
 if args.cuda:
