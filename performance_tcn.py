@@ -430,6 +430,11 @@ if __name__ == '__main__':
                         help='GPU ID. '
                              'Default value: None')
 
+    parser.add_argument('--mode', type=int,
+                        default="train",
+                        help='Mode. '
+                             'Default value: train')
+
     args = parser.parse_args()
 
     train_tcn_model(args.file_path,
@@ -440,5 +445,6 @@ if __name__ == '__main__':
                     args.tcn_stucks_num,
                     args.dropout,
                     args.num_training_steps,
-                    args.gpu_id
+                    args.gpu_id,
+                    args.mode
                     )
