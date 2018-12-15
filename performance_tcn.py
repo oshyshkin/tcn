@@ -430,7 +430,7 @@ if __name__ == '__main__':
                         help='GPU ID. '
                              'Default value: None')
 
-    parser.add_argument('--mode', type=int,
+    parser.add_argument('--mode', type=str,
                         default="train",
                         help='Mode. '
                              'Default value: train')
