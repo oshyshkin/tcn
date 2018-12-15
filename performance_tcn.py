@@ -321,6 +321,7 @@ def train_tcn_model(file_path,
             master = ''
             timeout_secs = 300
             eval_dir = os.path.join(logdir, 'eval')
+            train_dir = os.path.join(logdir, 'train')
 
             global_step = tf.train.get_or_create_global_step()
             loss = tf.get_collection('loss')[0]
@@ -344,7 +345,7 @@ def train_tcn_model(file_path,
                     tf.train.LoggingTensorHook(
                         logging_dict, every_n_iter=summary_frequency),
                     tf.train.StepCounterHook(
-                        output_dir=logdir, every_n_steps=summary_frequency)
+                        output_dir=train_dir, every_n_steps=summary_frequency)
                 ]
                 if num_training_steps:
                     hooks.append(tf.train.StopAtStepHook(num_training_steps))
@@ -357,7 +358,7 @@ def train_tcn_model(file_path,
                 tf.logging.info('Starting training loop...')
                 tf.contrib.training.train(
                     train_op=train_op,
-                    logdir=logdir,
+                    logdir=train_dir,
                     scaffold=scaffold,
                     hooks=hooks,
                     save_checkpoint_secs=save_checkpoint_secs,
@@ -375,7 +376,7 @@ def train_tcn_model(file_path,
                 ]
 
                 tf.contrib.training.evaluate_repeatedly(
-                    os.path.join(logdir, 'train'),
+                    train_dir,
                     eval_ops=eval_ops,
                     hooks=hooks,
                     eval_interval_secs=60,
