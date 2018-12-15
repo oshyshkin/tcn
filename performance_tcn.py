@@ -1,4 +1,6 @@
 import argparse
+import os
+
 import six
 import tensorflow as tf
 import numbers
@@ -143,15 +145,37 @@ class TemporalConvNet(tf.layers.Layer):
         return outputs
 
 
+class EvalLoggingTensorHook(tf.train.LoggingTensorHook):
+    """A revised version of LoggingTensorHook to use during evaluation.
+
+    This version supports being reset and increments `_iter_count` before run
+    instead of after run.
+    """
+
+    def begin(self):
+        # Reset timer.
+        self._timer.update_last_triggered_step(0)
+        super(EvalLoggingTensorHook, self).begin()
+
+    def before_run(self, run_context):
+        self._iter_count += 1
+        return super(EvalLoggingTensorHook, self).before_run(run_context)
+
+    def after_run(self, run_context, run_values):
+        super(EvalLoggingTensorHook, self).after_run(run_context, run_values)
+        self._iter_count -= 1
+
+
 def train_tcn_model(file_path,
-                    train_dir,
+                    logdir,
                     tcn_block_size=512,
                     tcn_deepth=3,
                     tcn_kernel_size=3,
                     tcn_stucks_num=1,
                     dropout=0.25,
                     num_training_steps=None,
-                    gpu_id=None):
+                    gpu_id=None,
+                    mode='train'):
     """ """
 
     tf.reset_default_graph()
@@ -172,7 +196,6 @@ def train_tcn_model(file_path,
             config = performance_model.default_configs["performance_with_dynamics_compact"]
             hparams = config.hparams
             encoder_decoder = config.encoder_decoder
-            mode = 'train'
 
             # For compact configs == 1; for one-hot vector == 388
             input_size = encoder_decoder.input_size
@@ -240,50 +263,74 @@ def train_tcn_model(file_path,
             event_positions = tf.to_float(tf.not_equal(labels_flat, no_event_label))
             no_event_positions = tf.to_float(tf.equal(labels_flat, no_event_label))
 
-            loss = tf.reduce_mean(softmax_cross_entropy)
-            perplexity = tf.exp(loss)
-            accuracy = tf.reduce_mean(correct_predictions)
-            event_accuracy = (
-                tf.reduce_sum(correct_predictions * event_positions) /
-                tf.reduce_sum(event_positions))
-            no_event_accuracy = (
-                tf.reduce_sum(correct_predictions * no_event_positions) /
-                tf.reduce_sum(no_event_positions))
+            if mode == 'train':
+                loss = tf.reduce_mean(softmax_cross_entropy)
+                perplexity = tf.exp(loss)
+                accuracy = tf.reduce_mean(correct_predictions)
+                event_accuracy = (
+                        tf.reduce_sum(correct_predictions * event_positions) /
+                        tf.reduce_sum(event_positions))
+                no_event_accuracy = (
+                        tf.reduce_sum(correct_predictions * no_event_positions) /
+                        tf.reduce_sum(no_event_positions))
 
-            vars_to_summarize = {
-                'loss': loss,
-                'metrics/perplexity': perplexity,
-                'metrics/accuracy': accuracy,
-                'metrics/event_accuracy': event_accuracy,
-                'metrics/no_event_accuracy': no_event_accuracy
-            }
+                optimizer = tf.train.AdamOptimizer(learning_rate=hparams.learning_rate)
+
+                train_op = tf.contrib.slim.learning.create_train_op(
+                    loss, optimizer, clip_gradient_norm=hparams.clip_norm)
+                tf.add_to_collection('train_op', train_op)
+
+                vars_to_summarize = {
+                    'loss': loss,
+                    'metrics/perplexity': perplexity,
+                    'metrics/accuracy': accuracy,
+                    'metrics/event_accuracy': event_accuracy,
+                    'metrics/no_event_accuracy': no_event_accuracy,
+                }
+            elif mode == 'eval':
+                vars_to_summarize, update_ops = tf.contrib.metrics.aggregate_metric_map(
+                    {
+                        'loss': tf.metrics.mean(softmax_cross_entropy),
+                        'metrics/accuracy': tf.metrics.accuracy(
+                            labels_flat, predictions_flat),
+                        'metrics/per_class_accuracy':
+                            tf.metrics.mean_per_class_accuracy(
+                                labels_flat, predictions_flat, num_classes),
+                        'metrics/event_accuracy': tf.metrics.recall(
+                            event_positions, correct_predictions),
+                        'metrics/no_event_accuracy': tf.metrics.recall(
+                            no_event_positions, correct_predictions),
+                    })
+                for updates_op in update_ops.values():
+                    tf.add_to_collection('eval_ops', updates_op)
+
+                # Perplexity is just exp(loss) and doesn't need its own update op.
+                vars_to_summarize['metrics/perplexity'] = tf.exp(
+                    vars_to_summarize['loss'])
 
             for var_name, var_value in six.iteritems(vars_to_summarize):
                 tf.summary.scalar(var_name, var_value)
                 tf.add_to_collection(var_name, var_value)
 
-            ########### Optimizing and train point ###########
-
-            optimizer = tf.train.AdamOptimizer(learning_rate=hparams.learning_rate)
-
-            train_op = tf.contrib.slim.learning.create_train_op(
-                loss, optimizer, clip_gradient_norm=hparams.clip_norm)
-            tf.add_to_collection('train_op', train_op)
-
-
-            ########### Training ###########
+            ########### Training/Evaluation ###########
             #train_dir="/Users/admin/Documents/Diploma/test/{}".format(time)
             summary_frequency = 10
             save_checkpoint_secs = 60
             checkpoints_to_keep = 10
             keep_checkpoint_every_n_hours = 1
             master = ''
+            timeout_secs = 300
+            eval_dir = os.path.join(logdir, 'eval')
 
             global_step = tf.train.get_or_create_global_step()
             loss = tf.get_collection('loss')[0]
             perplexity = tf.get_collection('metrics/perplexity')[0]
             accuracy = tf.get_collection('metrics/accuracy')[0]
-            train_op = tf.get_collection('train_op')[0]
+
+            if mode == "train":
+                train_op = tf.get_collection('train_op')[0]
+            elif mode == "eval":
+                eval_ops = tf.get_collection('eval_ops')
 
             logging_dict = {
                 'Global Step': global_step,
@@ -291,31 +338,48 @@ def train_tcn_model(file_path,
                 'Perplexity': perplexity,
                 'Accuracy': accuracy
             }
-            hooks = [
-                tf.train.NanTensorHook(loss),
-                tf.train.LoggingTensorHook(
-                    logging_dict, every_n_iter=summary_frequency),
-                tf.train.StepCounterHook(
-                    output_dir=train_dir, every_n_steps=summary_frequency)
-            ]
-            if num_training_steps:
-                hooks.append(tf.train.StopAtStepHook(num_training_steps))
+            if mode == "train":
+                hooks = [
+                    tf.train.NanTensorHook(loss),
+                    tf.train.LoggingTensorHook(
+                        logging_dict, every_n_iter=summary_frequency),
+                    tf.train.StepCounterHook(
+                        output_dir=logdir, every_n_steps=summary_frequency)
+                ]
+                if num_training_steps:
+                    hooks.append(tf.train.StopAtStepHook(num_training_steps))
 
-            scaffold = tf.train.Scaffold(
-                saver=tf.train.Saver(
-                    max_to_keep=checkpoints_to_keep,
-                    keep_checkpoint_every_n_hours=keep_checkpoint_every_n_hours))
+                scaffold = tf.train.Scaffold(
+                    saver=tf.train.Saver(
+                        max_to_keep=checkpoints_to_keep,
+                        keep_checkpoint_every_n_hours=keep_checkpoint_every_n_hours))
 
-            tf.logging.info('Starting training loop...')
-            tf.contrib.training.train(
-                train_op=train_op,
-                logdir=train_dir,
-                scaffold=scaffold,
-                hooks=hooks,
-                save_checkpoint_secs=save_checkpoint_secs,
-                save_summaries_steps=summary_frequency,
-                master=master)
-            tf.logging.info('Training complete.')
+                tf.logging.info('Starting training loop...')
+                tf.contrib.training.train(
+                    train_op=train_op,
+                    logdir=logdir,
+                    scaffold=scaffold,
+                    hooks=hooks,
+                    save_checkpoint_secs=save_checkpoint_secs,
+                    save_summaries_steps=summary_frequency,
+                    master=master)
+                tf.logging.info('Training complete.')
+
+            elif mode == "eval":
+                tf.gfile.MakeDirs(eval_dir)
+                num_batches = (magenta.common.count_records([file_path]) // config.hparams.batch_size)
+                hooks = [
+                    EvalLoggingTensorHook(logging_dict, every_n_iter=num_batches),
+                    tf.contrib.training.StopAfterNEvalsHook(num_batches),
+                    tf.contrib.training.SummaryAtEndHook(eval_dir),
+                ]
+
+                tf.contrib.training.evaluate_repeatedly(
+                    os.path.join(logdir, 'train'),
+                    eval_ops=eval_ops,
+                    hooks=hooks,
+                    eval_interval_secs=60,
+                    timeout=timeout_secs)
 
 
 if __name__ == '__main__':
